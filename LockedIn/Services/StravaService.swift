@@ -90,22 +90,28 @@ class StravaService: NSObject, ObservableObject {
     
     // MARK: - Token Management
     
-    /// Vérifie et rafraîchit le token si nécessaire
+    /// Vérifie et rafraîchit le token si nécessaire// Dans StravaService.swift
+    
     private func getValidToken() async throws -> String {
-        guard let token = accessToken else {
+        // 1. Vérifier qu'on a un token
+        guard let currentToken = accessToken else {
             throw StravaError.notConnected
         }
         
-        // Vérifie si le token expire bientôt (dans les 5 minutes)
+        // 2. Vérifier s'il expire bientôt (dans les 5 minutes)
         if let expiresAt = tokenExpiresAt, expiresAt < Date().addingTimeInterval(300) {
+            print("🔄 Token expiré ou presque, rafraîchissement...")
             try await refreshAccessToken()
+            
+            // Après le refresh, on renvoie le tout nouveau token
+            guard let newToken = accessToken else {
+                throw StravaError.tokenExpired
+            }
+            return newToken
         }
         
-        guard let validToken = accessToken else {
-            throw StravaError.tokenExpired
-        }
-        
-        return validToken
+        // 3. Sinon, le token actuel est bon
+        return currentToken
     }
     
     /// Rafraîchit le token d'accès

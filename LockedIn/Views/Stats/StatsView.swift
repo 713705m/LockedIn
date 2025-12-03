@@ -3,21 +3,27 @@ import SwiftData
 import Charts
 
 struct StatsView: View {
+    // MARK: - Propriétés
     @Environment(\.modelContext) private var modelContext
-    @Query(sort: \Seance.date) private var seances: [Seance]
+    @Environment(\.openURL) var openURL
     
+    // Récupération des séances depuis SwiftData
+    @Query(sort: \Seance.date, order: .reverse) private var seances: [Seance]
+    
+    // Service Strava (Singleton)
+    @ObservedObject private var stravaService = StravaService.shared
+    
+    // États locaux
     @State private var selectedPeriod: StatsPeriod = .deuxMois
-    @State private var stravaConnected = false
-    @State private var showingStravaAuth = false
-    
-    // Données pour les graphiques (simulées pour l'instant)
+    @State private var isSyncing = false
     @State private var weeklyData: [WeeklyStats] = []
     
+    // MARK: - Body
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 20) {
-                    // MARK: - Période sélection
+                    // 1. Sélecteur de période
                     Picker("Période", selection: $selectedPeriod) {
                         ForEach(StatsPeriod.allCases, id: \.self) { period in
                             Text(period.rawValue).tag(period)
@@ -25,45 +31,65 @@ struct StatsView: View {
                     }
                     .pickerStyle(.segmented)
                     .padding(.horizontal)
-                    
-                    // MARK: - Connexion Strava
-                    if !stravaConnected {
+                
+                    // 2. Carte de connexion (Visible seulement si non connecté)
+                    if !stravaService.isConnected {
                         StravaConnectionCard {
-                            showingStravaAuth = true
+                            connectStrava()
                         }
                         .padding(.horizontal)
                     }
                     
-                    // MARK: - Résumé
-                    SummaryCardsView(seances: seances, period: selectedPeriod)
+                    // 3. Indicateur de chargement pendant la sync
+                    if isSyncing {
+                        HStack {
+                            ProgressView()
+                            Text("Synchronisation avec Strava...")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    
+                    // 4. Résumé (KPIs)
+                    SummaryCardsView(seances: filteredSeances, period: selectedPeriod)
                         .padding(.horizontal)
                     
-                    // MARK: - Graphique Volume
+                    // 5. Graphiques
                     VolumeChartView(data: weeklyData)
                         .padding(.horizontal)
                     
-                    // MARK: - Graphique Intensité
                     IntensiteChartView(seances: filteredSeances)
                         .padding(.horizontal)
                     
-                    // MARK: - Répartition par sport
                     SportDistributionView(seances: filteredSeances)
                         .padding(.horizontal)
                 }
                 .padding(.vertical)
             }
             .navigationTitle("Statistiques")
+            // MARK: - Cycle de vie & Sync
             .onAppear {
                 generateWeeklyData()
             }
             .onChange(of: selectedPeriod) { _, _ in
                 generateWeeklyData()
             }
-            .sheet(isPresented: $showingStravaAuth) {
-                StravaAuthView(isConnected: $stravaConnected)
+            // Tente une sync au démarrage de la vue si connecté
+            .task {
+                if stravaService.isConnected {
+                    await syncStravaActivities()
+                }
+            }
+            // Réagit si la connexion change (ex: retour de Safari après OAuth)
+            .onChange(of: stravaService.isConnected) { _, isConnected in
+                if isConnected {
+                    Task { await syncStravaActivities() }
+                }
             }
         }
     }
+    
+    // MARK: - Logique Métier
     
     private var filteredSeances: [Seance] {
         let calendar = Calendar.current
@@ -79,11 +105,15 @@ struct StatsView: View {
             startDate = calendar.date(byAdding: .month, value: -3, to: now)!
         }
         
-        return seances.filter { $0.date >= startDate && $0.date <= now && $0.statut == .effectue }
+        // On filtre par date ET statut (si ton modèle a un statut)
+        return seances.filter {
+            $0.date >= startDate &&
+            $0.date <= now &&
+            $0.statut == .effectue
+        }
     }
     
     private func generateWeeklyData() {
-        // Génère des données par semaine à partir des séances
         let calendar = Calendar.current
         let now = Date()
         let weeksCount = selectedPeriod.weeks
@@ -106,9 +136,104 @@ struct StatsView: View {
             )
         }
     }
+    
+    // MARK: - Actions Strava
+    
+    private func connectStrava() {
+        Task {
+            do {
+                let url = try await stravaService.startOAuth()
+                openURL(url)
+            } catch {
+                print("Erreur de connexion : \(error)")
+            }
+        }
+    }
+    
+    // MARK: - Synchronisation Strava
+
+    // 1. Ajout du mot clé 'async' ici pour corriger l'erreur de compilation
+    private func syncStravaActivities() async {
+        guard stravaService.isConnected else { return }
+        
+        // On passe sur le MainActor pour modifier l'UI (isSyncing) et SwiftData
+        await MainActor.run { isSyncing = true }
+        
+        do {
+            print("🔄 Début de la synchronisation...")
+            
+            // Récupération des données depuis ton backend
+            let activities = try await stravaService.getActivities(days: 30)
+            
+            await MainActor.run {
+                var newCount = 0
+                
+                for activity in activities {
+                    // 2. Vérification d'existence plus robuste
+                    // On vérifie d'abord via l'ID Strava (String), sinon par date
+                    let stravaIdString = String(activity.id)
+                    
+                    let exists = seances.contains { seance in
+                        seance.stravaActivityId == stravaIdString ||
+                        Calendar.current.isDate(seance.date, equalTo: activity.date, toGranularity: .minute)
+                    }
+                    
+                    if !exists {
+                        // 3. Mapping précis vers ton initialiseur Seance.swift
+                        
+                        // Conversion du sport (ex: "Run" -> "Course")
+                        let sportTraduit = mapStravaSportToApp(stravaType: activity.type)
+                        
+                        // Création de la séance avec l'init obligatoire
+                        let nouvelleSeance = Seance(
+                            date: activity.date,
+                            type: .endurance, // Par défaut, Strava ne donne pas le type précis (VMA, Seuil...), on met Endurance
+                            sport: sportTraduit,
+                            dureeMinutes: Int(activity.movingTime / 60),
+                            description: activity.name, // Mappe vers description_
+                            intensite: .modere // Par défaut
+                        )
+                        
+                        // Remplissage des champs optionnels et d'état
+                        nouvelleSeance.statut = .effectue
+                        nouvelleSeance.distanceKm = activity.distanceKm // Ton backend renvoie déjà distance_km calculé ou activity.distance / 1000
+                        nouvelleSeance.stravaActivityId = stravaIdString
+                        
+                        // Si ton modèle backend renvoie la FC (average_heartrate)
+                        if let heartRate = activity.averageHeartrate {
+                            nouvelleSeance.fcMoyenne = Int(heartRate)
+                        }
+                        
+                        modelContext.insert(nouvelleSeance)
+                        newCount += 1
+                    }
+                }
+                print("✅ Fin de sync : \(newCount) nouvelles séances ajoutées")
+                
+                // On met à jour les graphiques
+                generateWeeklyData()
+                isSyncing = false
+            }
+        } catch {
+            print("❌ Erreur de synchronisation : \(error)")
+            await MainActor.run { isSyncing = false }
+        }
+    }
+    
+    // Petite fonction utilitaire pour traduire les sports Strava
+    private func mapStravaSportToApp(stravaType: String) -> String {
+        switch stravaType {
+        case "Run": return "Course"
+        case "Ride", "VirtualRide", "EBikeRide": return "Vélo"
+        case "Swim": return "Natation"
+        case "WeightTraining", "Workout": return "Renforcement"
+        case "Yoga": return "Étirements"
+        default: return "Course" // Valeur par défaut si inconnu
+        }
+    }
 }
 
-// MARK: - Enums & Models
+// MARK: - Enums & Models Helper
 
 enum StatsPeriod: String, CaseIterable {
     case unMois = "1 mois"
@@ -143,7 +268,7 @@ struct WeeklyStats: Identifiable {
     }
 }
 
-// MARK: - Strava Connection Card
+// MARK: - Subviews
 
 struct StravaConnectionCard: View {
     let action: () -> Void
@@ -158,7 +283,7 @@ struct StravaConnectionCard: View {
                 VStack(alignment: .leading) {
                     Text("Connecte Strava")
                         .font(.headline)
-                    Text("Synchronise tes activités automatiquement")
+                    Text("Synchronise tes activités")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -176,22 +301,16 @@ struct StravaConnectionCard: View {
     }
 }
 
-// MARK: - Summary Cards
-
 struct SummaryCardsView: View {
     let seances: [Seance]
     let period: StatsPeriod
     
-    private var effectuees: [Seance] {
-        seances.filter { $0.statut == .effectue }
-    }
-    
     private var totalMinutes: Int {
-        effectuees.reduce(0) { $0 + $1.dureeMinutes }
+        seances.reduce(0) { $0 + $1.dureeMinutes }
     }
     
     private var totalKm: Double {
-        effectuees.compactMap { $0.distanceKm }.reduce(0, +)
+        seances.compactMap { $0.distanceKm }.reduce(0, +)
     }
     
     var body: some View {
@@ -202,7 +321,7 @@ struct SummaryCardsView: View {
         ], spacing: 12) {
             StatCard(
                 title: "Séances",
-                value: "\(effectuees.count)",
+                value: "\(seances.count)",
                 icon: "figure.run",
                 color: .blue
             )
@@ -217,7 +336,7 @@ struct SummaryCardsView: View {
             StatCard(
                 title: "Distance",
                 value: String(format: "%.0f km", totalKm),
-                icon: "point.topleft.down.to.point.bottomright.curvepath.fill",
+                icon: "map.fill",
                 color: .orange
             )
         }
@@ -260,8 +379,6 @@ struct StatCard: View {
     }
 }
 
-// MARK: - Volume Chart
-
 struct VolumeChartView: View {
     let data: [WeeklyStats]
     
@@ -271,7 +388,7 @@ struct VolumeChartView: View {
                 .font(.headline)
             
             if data.isEmpty {
-                Text("Pas encore de données")
+                Text("Pas de données sur la période")
                     .foregroundStyle(.secondary)
                     .frame(height: 200)
                     .frame(maxWidth: .infinity)
@@ -285,15 +402,6 @@ struct VolumeChartView: View {
                     .cornerRadius(4)
                 }
                 .frame(height: 200)
-                .chartYAxis {
-                    AxisMarks(position: .leading) { value in
-                        AxisValueLabel {
-                            if let hours = value.as(Double.self) {
-                                Text("\(Int(hours))h")
-                            }
-                        }
-                    }
-                }
             }
         }
         .padding()
@@ -302,16 +410,13 @@ struct VolumeChartView: View {
     }
 }
 
-// MARK: - Intensite Chart
-
 struct IntensiteChartView: View {
     let seances: [Seance]
     
-    private var intensiteData: [(Intensite, Int)] {
-        let grouped = Dictionary(grouping: seances) { $0.intensite }
-        return Intensite.allCases.map { intensite in
-            (intensite, grouped[intensite]?.count ?? 0)
-        }
+    // Assure-toi que ton modèle Seance a bien une propriété 'intensite' qui est Hashable/Enum
+    private var intensiteData: [(String, Int)] {
+        let grouped = Dictionary(grouping: seances) { $0.intensite.rawValue } // ou .description
+        return grouped.map { ($0.key, $0.value.count) }
     }
     
     var body: some View {
@@ -320,7 +425,7 @@ struct IntensiteChartView: View {
                 .font(.headline)
             
             if seances.isEmpty {
-                Text("Pas encore de données")
+                Text("Pas assez de données")
                     .foregroundStyle(.secondary)
                     .frame(height: 150)
                     .frame(maxWidth: .infinity)
@@ -331,8 +436,7 @@ struct IntensiteChartView: View {
                         innerRadius: .ratio(0.5),
                         angularInset: 2
                     )
-                    .foregroundStyle(by: .value("Intensité", item.0.rawValue))
-                    .cornerRadius(4)
+                    .foregroundStyle(by: .value("Intensité", item.0))
                 }
                 .frame(height: 150)
             }
@@ -343,12 +447,11 @@ struct IntensiteChartView: View {
     }
 }
 
-// MARK: - Sport Distribution
-
 struct SportDistributionView: View {
     let seances: [Seance]
     
     private var sportData: [(String, Int)] {
+        // Suppose que seance.sport est une String ou a une propriété rawValue
         let grouped = Dictionary(grouping: seances) { $0.sport }
         return grouped.map { ($0.key, $0.value.reduce(0) { $0 + $1.dureeMinutes }) }
             .sorted { $0.1 > $1.1 }
@@ -382,62 +485,13 @@ struct SportDistributionView: View {
         let hours = minutes / 60
         let mins = minutes % 60
         if hours > 0 {
-            return "\(hours)h\(String(format: "%02d", mins))"
+            return "\(hours)h \(mins)"
         }
         return "\(mins)min"
     }
 }
 
-// MARK: - Strava Auth View (placeholder)
-
-struct StravaAuthView: View {
-    @Binding var isConnected: Bool
-    @Environment(\.dismiss) private var dismiss
-    
-    var body: some View {
-        NavigationStack {
-            VStack(spacing: 20) {
-                Image(systemName: "link.circle.fill")
-                    .font(.system(size: 80))
-                    .foregroundStyle(.orange)
-                
-                Text("Connexion à Strava")
-                    .font(.title)
-                    .bold()
-                
-                Text("Cette fonctionnalité nécessite un backend pour gérer l'authentification OAuth de manière sécurisée.")
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal)
-                
-                VStack(alignment: .leading, spacing: 8) {
-                    Label("Synchronisation automatique", systemImage: "arrow.triangle.2.circlepath")
-                    Label("Historique complet", systemImage: "clock.arrow.circlepath")
-                    Label("Statistiques détaillées", systemImage: "chart.bar.fill")
-                }
-                .padding()
-                .background(Color.gray.opacity(0.1))
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-                
-                Spacer()
-                
-                Text("À implémenter avec le backend Vercel")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            .padding()
-            
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Fermer") { dismiss() }
-                }
-            }
-        }
-    }
-}
-
 #Preview {
     StatsView()
-        .modelContainer(for: [Athlete.self, Seance.self, ChatMessage.self], inMemory: true)
+        .modelContainer(for: [Seance.self], inMemory: true)
 }
