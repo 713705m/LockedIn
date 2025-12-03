@@ -37,12 +37,20 @@
 			);
 			target = 3514AE5A2EE0CBEE004A25F5 /* LockedInUITests */;
 		};
+		3514AEB02EE0F7D1004A25F5 /* Exceptions for "LockedIn" folder in "LockedIn" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 3514AE3F2EE0CBEC004A25F5 /* LockedIn */;
+		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		3514AE422EE0CBEC004A25F5 /* LockedIn */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
+				3514AEB02EE0F7D1004A25F5 /* Exceptions for "LockedIn" folder in "LockedIn" target */,
 				3514AE862EE0D75C004A25F5 /* Exceptions for "LockedIn" folder in "LockedInUITests" target */,
 			);
 			path = LockedIn;
@@ -415,6 +423,7 @@
 				DEVELOPMENT_TEAM = U6FQ3XGPQ7;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = LockedIn/Info.plist;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -453,6 +462,7 @@
 				DEVELOPMENT_TEAM = U6FQ3XGPQ7;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = LockedIn/Info.plist;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
