@@ -1,0 +1,15 @@
+{
+  "name": "lockedin-backend",
+  "version": "1.0.0",
+  "description": "Backend API pour l'app LockedIn - Coach sportif IA",
+  "scripts": {
+    "dev": "vercel dev",
+    "deploy": "vercel --prod"
+  },
+  "dependencies": {
+    "groq-sdk": "^0.5.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

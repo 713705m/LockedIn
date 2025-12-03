@@ -6,12 +6,18 @@
 //
 
 import SwiftUI
+import SwiftData
 
 @main
 struct LockedInApp: App {
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            MainTabView()
         }
+        .modelContainer(for: [
+            Athlete.self,
+            Seance.self,
+            ChatMessage.self
+        ])
     }
 }

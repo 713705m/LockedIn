@@ -29,9 +29,22 @@
 		3514AE5B2EE0CBEE004A25F5 /* LockedInUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LockedInUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		3514AE862EE0D75C004A25F5 /* Exceptions for "LockedIn" folder in "LockedInUITests" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				ViewsModels/ChatViewModel.swift,
+			);
+			target = 3514AE5A2EE0CBEE004A25F5 /* LockedInUITests */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		3514AE422EE0CBEC004A25F5 /* LockedIn */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				3514AE862EE0D75C004A25F5 /* Exceptions for "LockedIn" folder in "LockedInUITests" target */,
+			);
 			path = LockedIn;
 			sourceTree = "<group>";
 		};
@@ -43,6 +56,11 @@
 		3514AE5E2EE0CBEE004A25F5 /* LockedInUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = LockedInUITests;
+			sourceTree = "<group>";
+		};
+		3514AE982EE0DE0C004A25F5 /* LockedIn-Backend */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = "LockedIn-Backend";
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -75,6 +93,7 @@
 		3514AE372EE0CBEC004A25F5 = {
 			isa = PBXGroup;
 			children = (
+				3514AE982EE0DE0C004A25F5 /* LockedIn-Backend */,
 				3514AE422EE0CBEC004A25F5 /* LockedIn */,
 				3514AE542EE0CBEE004A25F5 /* LockedInTests */,
 				3514AE5E2EE0CBEE004A25F5 /* LockedInUITests */,
@@ -109,6 +128,7 @@
 			);
 			fileSystemSynchronizedGroups = (
 				3514AE422EE0CBEC004A25F5 /* LockedIn */,
+				3514AE982EE0DE0C004A25F5 /* LockedIn-Backend */,
 			);
 			name = LockedIn;
 			packageProductDependencies = (
@@ -392,6 +412,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"LockedIn/Preview Content\"";
+				DEVELOPMENT_TEAM = U6FQ3XGPQ7;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
@@ -429,6 +450,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"LockedIn/Preview Content\"";
+				DEVELOPMENT_TEAM = U6FQ3XGPQ7;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
