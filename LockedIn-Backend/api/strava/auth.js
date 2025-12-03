@@ -21,8 +21,7 @@ export default async function handler(req, res) {
   }
 
   // L'URL de callback - à adapter selon ton déploiement
-  const redirectUri = `${process.env.VERCEL_URL ? 'https://' + process.env.VERCEL_URL : 'http://localhost:3000'}/api/strava/callback`;
-  
+  const redirectUri = 'https://lockedin-backend.vercel.app/api/strava/callback';
   // Scopes nécessaires pour lire les activités
   const scope = 'read,activity:read_all';
   
