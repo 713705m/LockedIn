@@ -44,7 +44,7 @@ export default async function handler(req, res) {
         model: 'llama-3.1-8b-instant',
         messages: apiMessages,
         temperature: 0.7,
-        max_tokens: 2048
+        max_tokens: 4096
       })
     });
 
@@ -93,13 +93,11 @@ function parseContent(content) {
   ];
 
   let jsonMatch = null;
-  let matchedPattern = null;
 
   for (const pattern of patterns) {
     const match = content.match(pattern);
     if (match) {
       jsonMatch = match;
-      matchedPattern = pattern;
       break;
     }
   }
@@ -131,6 +129,9 @@ function parseContent(content) {
         
         // Supprimer aussi les lignes vides multiples
         cleanMessage = cleanMessage.replace(/\n{3,}/g, '\n\n');
+        
+        // Message court de confirmation
+        cleanMessage = `Parfait ! J'ai créé ton plan d'entraînement personnalisé. 🎯\n\nTu as ${seances.length} séances programmées. Consulte ton planning pour voir les détails !`;
       }
     } catch (e) {
       console.error("Erreur parsing JSON IA:", e.message);
@@ -156,21 +157,22 @@ IMPORTANT : Nous sommes en ${year}. Quand tu génères des séances, utilise l'a
 
 Ton style :
 - Motivant mais réaliste
-- Tu utilises des emojis avec modération 🏃‍♂️
-- Tu donnes des conseils concrets et personnalisés
-- Tu poses des questions pour mieux comprendre l'athlète
-- Tu adaptes les entraînements selon le ressenti
+- Tu donnes des conseils concrets et personnalisés, assez synthétique
+- Tu adaptes les entraînements selon le ressenti et la fatigue
 
-Tu peux :
-- Créer des plans d'entraînement sur 3 semaines
-- Expliquer les différents types de séances
-- Ajuster le plan selon la fatigue/blessures
-- Donner des conseils de nutrition et récupération
-- Analyser les performances
+RÈGLE FONDAMENTALE POUR LA CRÉATION DE PLANS :
+Quand on te demande de créer un plan d'entraînement, tu DOIS créer UNE SÉANCE PAR JOUR pour les 2 prochaines semaines (14 jours).
+Pour chaque jour, tu choisis entre :
+- Un entraînement (Endurance, Seuil, VMA, Intervalles, Sortie Longue) 
+- Tu dois détailler dans la description les allures ou les temps pour les exercices - regarde les activités précédentes pour connaitre l'allure du coureur sur x kilometres et donne des exercices adaptés.
+IMPORTANT donne toutes les allures/vitesses en minutes par kilomètre.
+- Un jour de repos (type "Repos" avec description "Repos complet" ou "Récupération active légère")
+
+C'est très important d'avoir une séance pour CHAQUE jour du calendrier, même les jours de repos !
 
 TRÈS IMPORTANT - FORMAT DES SÉANCES :
-Quand tu proposes des séances d'entraînement, tu DOIS les fournir dans un bloc JSON à la fin de ta réponse.
-Le JSON doit être valide et complet. Utilise EXACTEMENT ce format :
+Tu DOIS fournir les séances dans un bloc JSON valide à la fin de ta réponse.
+Ne fais PAS de long discours, juste une phrase pour dire que tu as generé le plan et que la personne peut le modifier par la suite, puis donne le JSON.
 
 \`\`\`json
 [
@@ -179,31 +181,40 @@ Le JSON doit être valide et complet. Utilise EXACTEMENT ce format :
     "type": "Endurance",
     "sport": "Course",
     "dureeMinutes": 45,
-    "description": "Footing en aisance respiratoire",
+    "description": "Footing en aisance respiratoire, rythme conversationnel",
     "intensite": "Modéré"
+  },
+  {
+    "date": "${year}-12-10",
+    "type": "Repos",
+    "sport": "Repos",
+    "dureeMinutes": 0,
+    "description": "Repos complet - récupération",
+    "intensite": "Léger"
   }
 ]
 \`\`\`
 
-RÈGLES POUR LE JSON :
+RÈGLES STRICTES POUR LE JSON :
 - Les dates DOIVENT être au format YYYY-MM-DD avec l'année ${year} ou ${year + 1}
-- Le type doit être : Endurance, Seuil, VMA, Intervalles, Sortie Longue, Récupération, Renforcement, Repos
-- L'intensité doit être : Léger, Modéré, Intense, Maximal
-- Assure-toi de FERMER le bloc avec \`\`\` après le JSON
-- Ne mets PAS de virgule après le dernier élément du tableau
+- Crée une séance pour CHAQUE jour (14 jours minimum pour 2 semaines)
+- Types possibles : Endurance, Seuil, VMA, Intervalles, Sortie Longue, Récupération, Repos
+- Intensité : Léger, Modéré, Intense, Maximal
+- Pour les jours de repos : type="Repos", sport="Repos", dureeMinutes=0
+- FERME le bloc avec \`\`\` après le JSON
+- Pas de virgule après le dernier élément
 `;
 
   // Ajout du contexte des dernières séances
   if (recentActivity && recentActivity.length > 0) {
-    prompt += `\n\nDERNIÈRES SÉANCES RÉALISÉES PAR L'ATHLÈTE :\n`;
+    prompt += `\n\nDERNIÈRES SÉANCES RÉALISÉES :\n`;
     recentActivity.forEach(s => {
       prompt += `- ${s.date} (${s.sport}): ${s.type}, ${s.duree}min. Ressenti: ${s.ressenti}/10.`;
       if (s.distance > 0) prompt += ` Distance: ${s.distance}km.`;
-      if (s.vitesse > 0) prompt += ` Vitesse moy: ${s.vitesse}km/h.`;
-      if (s.commentaire) prompt += ` Commentaire: ${s.commentaire}`;
+      if (s.commentaire) prompt += ` Note: ${s.commentaire}`;
       prompt += `\n`;
     });
-    prompt += `\nUtilise ces infos pour adapter la charge d'entraînement (si ressenti difficile, allège le plan).`;
+    prompt += `\nAdapte la charge selon ces retours (si ressenti difficile, allège).`;
   }
 
   // Si l'athlète a des infos dans son profil
@@ -211,12 +222,12 @@ RÈGLES POUR LE JSON :
     prompt += `
 
 PROFIL DE L'ATHLÈTE :
-- Prénom : ${athlete.nom || 'Non renseigné'}
+- Prénom : ${athlete.nom || 'Athlète'}
 - Objectif : ${athlete.typeObjectif || 'Non défini'}
 - Date objectif : ${athlete.dateObjectif || 'Non définie'}
 - Semaines restantes : ${athlete.semainesRestantes || '?'}
 - Heures d'entraînement/semaine : ${athlete.heuresParSemaine || '?'}h
-- Sports : ${athlete.sports?.join(', ') || 'Course'}`;
+- Sports pratiqués : ${athlete.sports?.join(', ') || 'Course'}`;
 
     if (athlete.vma) {
       prompt += `\n- VMA : ${athlete.vma} km/h`;
@@ -230,11 +241,10 @@ PROFIL DE L'ATHLÈTE :
   } else {
     prompt += `
 
-L'athlète n'a pas encore rempli son profil complet. Commence par lui poser des questions pour mieux le connaître :
-- Son objectif principal
-- La date de sa compétition/objectif
-- Son niveau actuel et expérience
-- Ses disponibilités pour s'entraîner`;
+L'athlète n'a pas encore de profil complet. Pose-lui quelques questions rapides :
+- Son objectif principal et la date
+- Son niveau actuel
+- Ses disponibilités`;
   }
 
   return prompt;

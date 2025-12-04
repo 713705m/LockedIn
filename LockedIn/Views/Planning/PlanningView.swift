@@ -9,12 +9,12 @@ struct PlanningView: View {
     @State private var showingAddSeance = false
     @State private var selectedSeance: Seance?
     
-    // Dates des 4 prochaines semaines (étendu pour voir plus loin)
+    // Dates des 3 prochaines semaines (étendu pour voir plus loin)
     private var weeks: [(String, Date, Date)] {
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: Date())
         
-        return (0..<4).map { weekOffset in
+        return (0..<3).map { weekOffset in
             let weekStart = calendar.date(byAdding: .weekOfYear, value: weekOffset, to: today)!
             let actualStart = calendar.date(from: calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: weekStart))!
             let weekEnd = calendar.date(byAdding: .day, value: 6, to: actualStart)!
@@ -26,7 +26,6 @@ struct PlanningView: View {
             let label: String
             switch weekOffset {
             case 0: label = "Cette semaine"
-            case 1: label = "Semaine prochaine"
             default: label = "S+\(weekOffset)"
             }
             
@@ -77,7 +76,7 @@ struct PlanningView: View {
             VStack(spacing: 0) {
                 // MARK: - Sélecteur de semaine
                 Picker("Semaine", selection: $selectedWeek) {
-                    ForEach(0..<4) { index in
+                    ForEach(0..<3) { index in
                         Text(weeks[index].0).tag(index)
                     }
                 }
@@ -160,6 +159,18 @@ struct PlanningView: View {
             }
             .navigationTitle("Planning")
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Menu {
+                        Button(role: .destructive) {
+                            deleteAllIASeances()
+                        } label: {
+                            Label("Supprimer toutes les séances IA", systemImage: "trash")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                }
+                
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         showingAddSeance = true
@@ -184,6 +195,22 @@ struct PlanningView: View {
             } else {
                 seance.statut = .effectue
             }
+        }
+    }
+    
+    // Supprime TOUTES les séances générées par l'IA (planifiées)
+    private func deleteAllIASeances() {
+        let iaSeances = seances.filter { seance in
+            // Critère : source == .ia OU planId != nil (anciennes séances IA)
+            let isFromIA = seance.source == .ia || seance.planId != nil
+            let isPlanifie = seance.statut == .planifie
+            return isFromIA && isPlanifie
+        }
+        
+        print("🗑️ Suppression de \(iaSeances.count) séances IA")
+        
+        for seance in iaSeances {
+            modelContext.delete(seance)
         }
     }
     
@@ -245,8 +272,9 @@ struct SeanceCard: View {
                         Image(systemName: "arrow.uturn.right.circle.fill")
                             .foregroundStyle(.orange)
                     case .planifie:
-                        // Badge IA si généré par l'IA
-                        if seance.planId != nil {
+                        // Badge selon la source
+                        switch seance.sourceAffichage {
+                        case .ia:
                             Text("IA")
                                 .font(.system(size: 8, weight: .bold))
                                 .foregroundStyle(.white)
@@ -254,7 +282,10 @@ struct SeanceCard: View {
                                 .padding(.vertical, 2)
                                 .background(Color.purple)
                                 .clipShape(RoundedRectangle(cornerRadius: 4))
-                        } else {
+                        case .strava:
+                            Image(systemName: "link.circle.fill")
+                                .foregroundStyle(.orange)
+                        case .manuel:
                             Image(systemName: "circle")
                                 .foregroundStyle(.gray.opacity(0.3))
                         }
@@ -417,8 +448,9 @@ struct SeanceDetailView: View {
                                 Text(seance.type.rawValue)
                                     .font(.headline)
                                 
-                                // Badge IA
-                                if seance.planId != nil {
+                                // Badge selon la source
+                                switch seance.sourceAffichage {
+                                case .ia:
                                     Text("Généré par IA")
                                         .font(.caption2)
                                         .foregroundStyle(.white)
@@ -426,6 +458,16 @@ struct SeanceDetailView: View {
                                         .padding(.vertical, 2)
                                         .background(Color.purple)
                                         .clipShape(RoundedRectangle(cornerRadius: 4))
+                                case .strava:
+                                    Text("Strava")
+                                        .font(.caption2)
+                                        .foregroundStyle(.white)
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(Color.orange)
+                                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                                case .manuel:
+                                    EmptyView()
                                 }
                             }
                             Text(seance.dateFormatee)

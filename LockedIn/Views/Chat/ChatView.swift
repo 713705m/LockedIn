@@ -8,60 +8,61 @@ struct ChatView: View {
     @Query(sort: \ChatMessage.timestamp) private var messages: [ChatMessage]
     // On récupère les athlètes
     @Query private var athletes: [Athlete]
-    // NOUVEAU : On récupère toutes les séances pour les envoyer au contexte de l'IA
+    // On récupère toutes les séances pour les envoyer au contexte de l'IA
     @Query(sort: \Seance.date) private var seances: [Seance]
     
     @State private var viewModel = ChatViewModel()
     @State private var inputText = ""
     @State private var isLoading = false
     
-    // NOUVEAU : Pour gérer le versioning du plan (savoir quel lot de séances remplacer)
+    // Pour gérer le versioning du plan
     @State private var currentPlanId: String?
     
+    // Pour le choix de la date de début
+    @State private var showDatePicker = false
+    @State private var selectedStartDate = Date()
+    
+    // Pour afficher le message de succès
+    @State private var showSuccessMessage = false
+    @State private var seancesCreees = 0
+    
     private var athlete: Athlete? { athletes.first }
+    
+    // Vérifie si on a des séances IA planifiées
+    private var hasExistingPlan: Bool {
+        seances.contains { $0.sourceAffichage == .ia && $0.statut == .planifie }
+    }
     
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
                 
-                // MARK: - Choix Initial ou Liste des Messages
-                if messages.isEmpty {
-                    // Si aucune conversation, on affiche les boutons de choix
-                    VStack(spacing: 20) {
-                        Spacer()
-                        
-                        Text("Que veux-tu faire ?")
-                            .font(.title2)
-                            .fontWeight(.bold)
-                        
-                        Button {
-                            startNewPlan()
-                        } label: {
-                            Label("Générer un nouveau plan", systemImage: "sparkles")
-                                .frame(maxWidth: .infinity)
-                                .padding()
-                                .background(Color.blue)
-                                .foregroundColor(.white)
-                                .clipShape(RoundedRectangle(cornerRadius: 12))
-                        }
-                        
-                        Button {
+                // MARK: - Accueil avec les 2 boutons OU Chat
+                if messages.isEmpty && !showSuccessMessage {
+                    // Écran d'accueil avec les boutons
+                    AccueilChatView(
+                        hasExistingPlan: hasExistingPlan,
+                        onNewPlan: {
+                            showDatePicker = true
+                        },
+                        onModifyPlan: {
                             modifyCurrentPlan()
-                        } label: {
-                            Label("Modifier mon plan actuel", systemImage: "slider.horizontal.3")
-                                .frame(maxWidth: .infinity)
-                                .padding()
-                                .background(Color.gray.opacity(0.15))
-                                .foregroundColor(.primary)
-                                .clipShape(RoundedRectangle(cornerRadius: 12))
                         }
-                        
-                        Spacer()
-                    }
-                    .padding()
+                    )
+                    
+                } else if showSuccessMessage {
+                    // Message de succès après création
+                    SuccessView(
+                        seancesCount: seancesCreees,
+                        onDismiss: {
+                            // Réinitialiser et revenir à l'accueil
+                            clearChat()
+                            showSuccessMessage = false
+                        }
+                    )
                     
                 } else {
-                    // Sinon, on affiche le chat classique
+                    // Chat classique
                     ScrollViewReader { proxy in
                         ScrollView {
                             LazyVStack(spacing: 12) {
@@ -84,52 +85,60 @@ struct ChatView: View {
                             scrollToBottom(proxy: proxy)
                         }
                     }
-                }
-                
-                Divider()
-                
-                // MARK: - Input Bar
-                HStack(spacing: 12) {
-                    TextField("Message...", text: $inputText, axis: .vertical)
-                        .textFieldStyle(.plain)
-                        .lineLimit(1...5)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 10)
-                        .background(Color(.systemGray6))
-                        .clipShape(RoundedRectangle(cornerRadius: 20))
                     
-                    Button {
-                        sendMessage()
-                    } label: {
-                        Image(systemName: "arrow.up.circle.fill")
-                            .font(.system(size: 32))
-                            .foregroundStyle(inputText.isEmpty ? .gray : .blue)
+                    Divider()
+                    
+                    // MARK: - Input Bar
+                    HStack(spacing: 12) {
+                        TextField("Message...", text: $inputText, axis: .vertical)
+                            .textFieldStyle(.plain)
+                            .lineLimit(1...5)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 10)
+                            .background(Color(.systemGray6))
+                            .clipShape(RoundedRectangle(cornerRadius: 20))
+                        
+                        Button {
+                            sendMessage()
+                        } label: {
+                            Image(systemName: "arrow.up.circle.fill")
+                                .font(.system(size: 32))
+                                .foregroundStyle(inputText.isEmpty ? .gray : .blue)
+                        }
+                        .disabled(inputText.isEmpty || isLoading)
                     }
-                    .disabled(inputText.isEmpty || isLoading)
+                    .padding(.horizontal)
+                    .padding(.vertical, 8)
+                    .background(Color(.systemBackground))
                 }
-                .padding(.horizontal)
-                .padding(.vertical, 8)
-                .background(Color(.systemBackground))
             }
             .navigationTitle("Coach IA 🏃")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        Button("Nouvelle conversation", systemImage: "trash") {
+                // Bouton retour si on est dans le chat
+                if !messages.isEmpty && !showSuccessMessage {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button {
                             clearChat()
+                        } label: {
+                            Image(systemName: "chevron.left")
                         }
-                        Button("Regénérer le plan", systemImage: "arrow.clockwise") {
-                            regeneratePlan()
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
                     }
                 }
             }
-            .onAppear {
-                // On ne met plus de message de bienvenue automatique ici
-                // pour laisser l'utilisateur choisir via les boutons
+            // MARK: - Sheet pour choisir la date de début
+            .sheet(isPresented: $showDatePicker) {
+                StartDatePickerView(
+                    selectedDate: $selectedStartDate,
+                    onConfirm: {
+                        showDatePicker = false
+                        startNewPlan(from: selectedStartDate)
+                    },
+                    onCancel: {
+                        showDatePicker = false
+                    }
+                )
+                .presentationDetents([.medium])
             }
         }
     }
@@ -137,19 +146,38 @@ struct ChatView: View {
     // MARK: - Logique Métier
     
     // Option 1 : L'utilisateur veut un tout nouveau plan
-    private func startNewPlan() {
+    private func startNewPlan(from startDate: Date) {
+        // Supprimer TOUTES les anciennes séances IA planifiées
+        // On considère comme "IA" : source == .ia OU planId != nil (anciennes séances)
+        let oldSeances = seances.filter { seance in
+            let isFromIA = seance.source == .ia || seance.planId != nil
+            let isPlanifie = seance.statut == .planifie
+            return isFromIA && isPlanifie
+        }
+        
+        print("🗑️ Suppression de \(oldSeances.count) anciennes séances IA")
+        for s in oldSeances {
+            modelContext.delete(s)
+        }
+        
         // On génère un nouvel ID unique pour ce cycle
         currentPlanId = UUID().uuidString
         
-        // On pré-remplit le message pour lancer la machine
-        inputText = "Peux-tu me générer un plan d'entraînement pour mon objectif ?"
+        // Formatter la date pour le message
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "fr_FR")
+        formatter.dateFormat = "EEEE d MMMM yyyy"
+        let dateString = formatter.string(from: startDate)
+        
+        // On pré-remplit le message avec la date de début
+        inputText = "Génère-moi un plan d'entraînement complet pour mon objectif. Je souhaite commencer le \(dateString). Propose-moi une séance pour CHAQUE jour (soit un entraînement, soit un jour de repos actif ou complet)."
         sendMessage()
     }
     
     // Option 2 : L'utilisateur veut modifier l'existant
     private func modifyCurrentPlan() {
         // On essaie de retrouver l'ID du plan en cours via la dernière séance planifiée
-        if let lastSeance = seances.filter({ $0.statut == .planifie }).last {
+        if let lastSeance = seances.filter({ $0.statut == .planifie && $0.sourceAffichage == .ia }).last {
             currentPlanId = lastSeance.planId ?? UUID().uuidString
         } else {
             currentPlanId = UUID().uuidString
@@ -157,7 +185,7 @@ struct ChatView: View {
         
         // On insère juste un message de l'IA pour inviter à parler
         let welcomeMsg = ChatMessage(
-            contenu: "Je suis prêt à adapter ton plan. Que souhaites-tu modifier ? (jours, intensité, durée...)",
+            contenu: "Je suis prêt à adapter ton plan ! 💪\n\nQue souhaites-tu modifier ?\n• Changer les jours d'entraînement\n• Ajuster l'intensité\n• Modifier la durée des séances\n• Autre chose ?",
             estUtilisateur: false
         )
         modelContext.insert(welcomeMsg)
@@ -176,12 +204,12 @@ struct ChatView: View {
         
         Task {
             do {
-                // 2. Appel API avec le contexte complet (toutes les séances)
+                // 2. Appel API avec le contexte complet
                 let (responseString, newSeances) = try await viewModel.sendMessage(
                     text,
                     history: messages,
                     athlete: athlete,
-                    allSeances: seances // On passe tout, le ViewModel filtrera les 5 dernières effectuées
+                    allSeances: seances
                 )
                 
                 // 3. Sauvegarde réponse IA
@@ -191,6 +219,16 @@ struct ChatView: View {
                 // 4. Gestion intelligente des séances (Versioning)
                 if !newSeances.isEmpty {
                     handleNewSeances(newSeances)
+                    
+                    // Afficher le message de succès et fermer le chat
+                    seancesCreees = newSeances.count
+                    
+                    // Petit délai pour que l'utilisateur voie la réponse
+                    try? await Task.sleep(nanoseconds: 1_500_000_000) // 1.5 secondes
+                    
+                    await MainActor.run {
+                        showSuccessMessage = true
+                    }
                 }
                 
             } catch {
@@ -210,14 +248,16 @@ struct ChatView: View {
         currentPlanId = planId
         
         // 1. Identifier les séances À SUPPRIMER
-        // -> Celles qui appartiennent au plan actuel
-        // -> Qui sont encore "Planifiées" (pas effectuées)
-        // -> Qui sont dans le futur (optionnel, pour sécurité)
+        // On supprime TOUTES les séances IA planifiées (pas effectuées) dans le futur
+        // Critère : source == .ia OU planId != nil (pour les anciennes séances)
         let seancesToDelete = seances.filter { existingSeance in
-            existingSeance.planId == planId &&
-            existingSeance.statut == .planifie &&
-            existingSeance.date >= Calendar.current.startOfDay(for: Date())
+            let isFromIA = existingSeance.source == .ia || existingSeance.planId != nil
+            let isPlanifie = existingSeance.statut == .planifie
+            let isFuture = existingSeance.date >= Calendar.current.startOfDay(for: Date())
+            return isFromIA && isPlanifie && isFuture
         }
+        
+        print("🗑️ Suppression de \(seancesToDelete.count) anciennes séances IA planifiées")
         
         // Suppression
         for s in seancesToDelete {
@@ -226,47 +266,12 @@ struct ChatView: View {
         
         // 2. Ajouter les NOUVELLES séances
         for seanceIA in seancesIA {
-            // On convertit et on attache le planId
             if let newSeance = seanceIA.toSeance(planId: planId) {
                 modelContext.insert(newSeance)
             }
         }
         
         print("✅ Plan mis à jour (ID: \(planId)) : \(seancesToDelete.count) supprimées, \(seancesIA.count) ajoutées.")
-    }
-    
-    private func regeneratePlan() {
-        let request = ChatMessage(
-            contenu: "Peux-tu me régénérer un plan d'entraînement sur les 3 prochaines semaines ?",
-            estUtilisateur: true
-        )
-        modelContext.insert(request)
-        
-        isLoading = true
-        
-        Task {
-            do {
-                let (responseString, newSeances) = try await viewModel.sendMessage(
-                    request.contenu,
-                    history: messages,
-                    athlete: athlete,
-                    allSeances: seances
-                )
-                
-                let aiMessage = ChatMessage(contenu: responseString, estUtilisateur: false)
-                modelContext.insert(aiMessage)
-                
-                if !newSeances.isEmpty {
-                    handleNewSeances(newSeances)
-                }
-                
-            } catch {
-                let errorMessage = ChatMessage.messageErreur()
-                modelContext.insert(errorMessage)
-            }
-            
-            isLoading = false
-        }
     }
     
     private func scrollToBottom(proxy: ScrollViewProxy) {
@@ -283,8 +288,191 @@ struct ChatView: View {
         for message in messages {
             modelContext.delete(message)
         }
-        // On reset aussi l'ID du plan pour repartir de zéro
         currentPlanId = nil
+    }
+}
+
+// MARK: - Accueil Chat View
+
+struct AccueilChatView: View {
+    let hasExistingPlan: Bool
+    let onNewPlan: () -> Void
+    let onModifyPlan: () -> Void
+    
+    var body: some View {
+        VStack(spacing: 32) {
+            Spacer()
+            
+            // Icône
+            Image(systemName: "figure.run.circle.fill")
+                .font(.system(size: 80))
+                .foregroundStyle(.blue)
+            
+            // Titre
+            VStack(spacing: 8) {
+                Text("Ton Coach IA")
+                    .font(.title)
+                    .fontWeight(.bold)
+                
+                Text("Prêt à créer ton programme d'entraînement personnalisé")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
+            }
+            
+            Spacer()
+            
+            // Boutons
+            VStack(spacing: 16) {
+                // Bouton principal : Nouveau plan
+                Button {
+                    onNewPlan()
+                } label: {
+                    HStack {
+                        Image(systemName: "sparkles")
+                        Text(hasExistingPlan ? "Régénérer un nouveau plan" : "Générer mon plan")
+                    }
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(Color.blue)
+                    .foregroundColor(.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                }
+                
+                // Bouton secondaire : Modifier (seulement si un plan existe)
+                if hasExistingPlan {
+                    Button {
+                        onModifyPlan()
+                    } label: {
+                        HStack {
+                            Image(systemName: "pencil.and.outline")
+                            Text("Modifier mon plan actuel")
+                        }
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(Color(.systemGray5))
+                        .foregroundColor(.primary)
+                        .clipShape(RoundedRectangle(cornerRadius: 14))
+                    }
+                }
+            }
+            .padding(.horizontal, 24)
+            .padding(.bottom, 40)
+        }
+    }
+}
+
+// MARK: - Success View
+
+struct SuccessView: View {
+    let seancesCount: Int
+    let onDismiss: () -> Void
+    
+    @State private var showCheckmark = false
+    
+    var body: some View {
+        VStack(spacing: 32) {
+            Spacer()
+            
+            // Animation checkmark
+            ZStack {
+                Circle()
+                    .fill(Color.green.opacity(0.15))
+                    .frame(width: 120, height: 120)
+                
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 80))
+                    .foregroundStyle(.green)
+                    .scaleEffect(showCheckmark ? 1 : 0.5)
+                    .opacity(showCheckmark ? 1 : 0)
+            }
+            .onAppear {
+                withAnimation(.spring(response: 0.5, dampingFraction: 0.6)) {
+                    showCheckmark = true
+                }
+            }
+            
+            // Message
+            VStack(spacing: 12) {
+                Text("Plan créé ! 🎉")
+                    .font(.title)
+                    .fontWeight(.bold)
+                
+                Text("\(seancesCount) séances ont été ajoutées à ton planning")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+            
+            Spacer()
+            
+            // Bouton
+            Button {
+                onDismiss()
+            } label: {
+                Text("Voir mon planning")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(Color.blue)
+                    .foregroundColor(.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
+            }
+            .padding(.horizontal, 24)
+            .padding(.bottom, 40)
+        }
+    }
+}
+
+// MARK: - Date Picker View
+
+struct StartDatePickerView: View {
+    @Binding var selectedDate: Date
+    let onConfirm: () -> Void
+    let onCancel: () -> Void
+    
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 24) {
+                Text("📅 Quand veux-tu commencer ?")
+                    .font(.title2)
+                    .fontWeight(.bold)
+                
+                Text("Choisis la date de début de ton plan d'entraînement")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                
+                DatePicker(
+                    "Date de début",
+                    selection: $selectedDate,
+                    in: Date()...,
+                    displayedComponents: .date
+                )
+                .datePickerStyle(.graphical)
+                .padding(.horizontal)
+                
+                Spacer()
+            }
+            .padding(.top, 24)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Annuler") {
+                        onCancel()
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Commencer") {
+                        onConfirm()
+                    }
+                    .bold()
+                }
+            }
+        }
     }
 }
 

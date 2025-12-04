@@ -26,6 +26,10 @@ class Seance {
     // Identifiant du plan (pour le versioning)
     var planId: String?
     
+    // Source de la séance (pour distinguer IA / Strava / Manuel)
+    // Optionnel pour la rétrocompatibilité avec les séances existantes
+    var source: SourceSeance?
+    
     init(
         date: Date,
         type: TypeSeance,
@@ -33,7 +37,8 @@ class Seance {
         dureeMinutes: Int,
         description: String,
         intensite: Intensite = .modere,
-        planId: String? = nil
+        planId: String? = nil,
+        source: SourceSeance? = .manuel
     ) {
         self.id = UUID()
         self.date = date
@@ -44,6 +49,7 @@ class Seance {
         self.intensite = intensite
         self.statut = .planifie
         self.planId = planId
+        self.source = source
     }
     
     // MARK: - Computed Properties
@@ -58,6 +64,25 @@ class Seance {
     
     var estCetteSemaine: Bool {
         Calendar.current.isDate(date, equalTo: Date(), toGranularity: .weekOfYear)
+    }
+    
+    /// Indique si cette séance doit être comptée dans les stats
+    /// Seules les séances Strava ou manuelles effectuées comptent
+    /// Les séances IA (même effectuées) ne comptent PAS dans les stats
+    var compterDansStats: Bool {
+        guard statut == .effectue else { return false }
+        // Si source est nil (anciennes séances) ou != .ia, on compte
+        return source != .ia
+    }
+    
+    /// Indique si c'est une séance planifiée par l'IA (pas encore réalisée)
+    var estPlanifieeIA: Bool {
+        return source == .ia && statut == .planifie
+    }
+    
+    /// Source avec valeur par défaut pour l'affichage
+    var sourceAffichage: SourceSeance {
+        return source ?? .manuel
     }
     
     var dateFormatee: String {
@@ -84,6 +109,14 @@ class Seance {
         }
         return "\(dureeMinutes) min"
     }
+}
+
+// MARK: - Source Seance
+
+enum SourceSeance: String, Codable {
+    case ia = "IA"           // Générée par l'IA
+    case strava = "Strava"   // Importée de Strava
+    case manuel = "Manuel"   // Créée manuellement par l'utilisateur
 }
 
 // MARK: - Enums
@@ -131,7 +164,6 @@ enum TypeSeance: String, Codable, CaseIterable {
         }
     }
     
-    // ✅ Fonction ajoutée pour convertir le texte de l'IA en Enum
     static func from(string: String) -> TypeSeance {
         let normalized = string.lowercased()
             .replacingOccurrences(of: "é", with: "e")
@@ -160,6 +192,10 @@ enum Intensite: String, Codable, CaseIterable {
     case intense = "Intense"
     case maximal = "Maximal"
     
+    // Ajout de facile et maximum pour compatibilité avec l'IA
+    static var facile: Intensite { .leger }
+    static var maximum: Intensite { .maximal }
+    
     var valeur: Int {
         switch self {
         case .leger: return 1
@@ -169,7 +205,6 @@ enum Intensite: String, Codable, CaseIterable {
         }
     }
     
-    // ✅ Fonction ajoutée pour convertir le texte de l'IA en Enum
     static func from(string: String) -> Intensite {
         let normalized = string.lowercased()
             .replacingOccurrences(of: "é", with: "e")
@@ -214,7 +249,6 @@ struct SeanceFromIA: Codable {
     func toSeance(planId: String?) -> Seance? {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
-        // Astuce pour éviter les soucis de fuseau horaire
         formatter.locale = Locale(identifier: "en_US_POSIX")
         
         guard let dateParsed = formatter.date(from: date) else { return nil }
@@ -222,15 +256,15 @@ struct SeanceFromIA: Codable {
         // On met la séance à 9h par défaut
         let dateFinale = Calendar.current.date(bySettingHour: 9, minute: 0, second: 0, of: dateParsed) ?? dateParsed
         
-        // ✅ CORRECTION ICI : On utilise les fonctions .from(string:) qu'on vient d'ajouter
         return Seance(
             date: dateFinale,
-            type: TypeSeance.from(string: type),       // Conversion String -> Enum
+            type: TypeSeance.from(string: type),
             sport: sport,
             dureeMinutes: dureeMinutes,
             description: description,
-            intensite: Intensite.from(string: intensite), // Conversion String -> Enum
-            planId: planId
+            intensite: Intensite.from(string: intensite),
+            planId: planId,
+            source: .ia  // ← IMPORTANT : On marque la source comme IA
         )
     }
 }
