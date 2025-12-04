@@ -58,7 +58,10 @@ struct StatsView: View {
                     VolumeChartView(data: weeklyData)
                         .padding(.horizontal)
                     
-                    IntensiteChartView(seances: filteredSeances)
+                    SpeedEvolutionChart(seances: filteredSeances)
+                        .padding(.horizontal)
+                    
+                    SportAveragesTableView(seances: filteredSeances)
                         .padding(.horizontal)
                     
                     SportDistributionView(seances: filteredSeances)
@@ -410,43 +413,449 @@ struct VolumeChartView: View {
     }
 }
 
-struct IntensiteChartView: View {
+struct SpeedEvolutionChart: View {
     let seances: [Seance]
     
-    // Assure-toi que ton modèle Seance a bien une propriété 'intensite' qui est Hashable/Enum
-    private var intensiteData: [(String, Int)] {
-        let grouped = Dictionary(grouping: seances) { $0.intensite.rawValue } // ou .description
-        return grouped.map { ($0.key, $0.value.count) }
+    // État pour le choix du sport
+    @State private var selectedSport = "Course"
+    let sports = ["Course", "Vélo", "Natation"]
+    
+    // Structure interne pour les points du graph
+    struct DataPoint: Identifiable {
+        let id = UUID()
+        let date: Date
+        let value: Double
+    }
+    
+    // Calcul des données selon le sport
+    private var chartData: [DataPoint] {
+        let filtered = seances.filter {
+            $0.sport == selectedSport &&
+            $0.statut == .effectue &&
+            ($0.distanceKm ?? 0) > 0 &&
+            $0.dureeMinutes > 0
+        }.sorted { $0.date < $1.date }
+        
+        return filtered.map { seance in
+            let dist = seance.distanceKm ?? 0
+            let mins = Double(seance.dureeMinutes)
+            var val: Double = 0
+            
+            switch selectedSport {
+            case "Course":
+                // min/km
+                val = mins / dist
+            case "Natation":
+                // min/100m (distance * 10 = nbr de 100m)
+                val = mins / (dist * 10)
+            case "Vélo":
+                // km/h
+                val = dist / (mins / 60.0)
+            default:
+                val = 0
+            }
+            
+            return DataPoint(date: seance.date, value: val)
+        }
+    }
+    
+    private var yAxisLabel: String {
+        switch selectedSport {
+        case "Course": return "Allure (min/km)"
+        case "Natation": return "Allure (min/100m)"
+        default: return "Vitesse (km/h)"
+        }
     }
     
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Répartition par intensité")
-                .font(.headline)
-            
-            if seances.isEmpty {
-                Text("Pas assez de données")
-                    .foregroundStyle(.secondary)
-                    .frame(height: 150)
-                    .frame(maxWidth: .infinity)
-            } else {
-                Chart(intensiteData, id: \.0) { item in
-                    SectorMark(
-                        angle: .value("Count", item.1),
-                        innerRadius: .ratio(0.5),
-                        angularInset: 2
-                    )
-                    .foregroundStyle(by: .value("Intensité", item.0))
+            // Header avec Titre et Picker
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Évolution Performance")
+                    .font(.headline)
+                
+                Picker("Sport", selection: $selectedSport) {
+                    ForEach(sports, id: \.self) { sport in
+                        Text(sport).tag(sport)
+                    }
                 }
-                .frame(height: 150)
+                .pickerStyle(.segmented)
+            }
+            
+            if chartData.isEmpty {
+                ContentUnavailableView {
+                    Label("Pas assez de données", systemImage: "chart.xyaxis.line")
+                } description: {
+                    Text("Effectue des séances de \(selectedSport.lowercased()) pour voir ta progression.")
+                }
+                .frame(height: 220)
+            } else {
+                Chart(chartData) { item in
+                    // Ligne
+                    LineMark(
+                        x: .value("Date", item.date),
+                        y: .value("Vitesse", item.value)
+                    )
+                    .interpolationMethod(.catmullRom)
+                    .foregroundStyle(sportColor)
+                    
+                    // Points
+                    PointMark(
+                        x: .value("Date", item.date),
+                        y: .value("Vitesse", item.value)
+                    )
+                    .foregroundStyle(sportColor)
+                    
+                    // Zone dégradée
+                    AreaMark(
+                        x: .value("Date", item.date),
+                        y: .value("Vitesse", item.value)
+                    )
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [sportColor.opacity(0.3), sportColor.opacity(0.0)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                }
+                .chartYScale(domain: .automatic(includesZero: false))
+                .chartYAxis {
+                    AxisMarks(position: .leading) { value in
+                        AxisGridLine()
+                        AxisTick()
+                        AxisValueLabel {
+                            if let doubleValue = value.as(Double.self) {
+                                Text(formatAxisValue(doubleValue))
+                            }
+                        }
+                    }
+                }
+                .chartXAxis {
+                    AxisMarks(format: .dateTime.day().month())
+                }
+                .frame(height: 220)
             }
         }
         .padding()
         .background(Color.gray.opacity(0.1))
         .clipShape(RoundedRectangle(cornerRadius: 12))
+        .animation(.easeInOut, value: selectedSport) // Animation fluide au changement
+    }
+    
+    // MARK: - Helpers
+    
+    private var sportColor: Color {
+        switch selectedSport {
+        case "Course": return .blue
+        case "Vélo": return .green
+        case "Natation": return .cyan
+        default: return .blue
+        }
+    }
+    
+    // Formatteur pour convertir les décimales (5.5) en temps (5'30") si besoin
+    private func formatAxisValue(_ value: Double) -> String {
+        if selectedSport == "Vélo" {
+            // Pour le vélo, on affiche juste le chiffre (km/h)
+            return String(format: "%.0f", value)
+        } else {
+            // Pour Course/Natation, on convertit en min'sec"
+            let minutes = Int(value)
+            let seconds = Int((value - Double(minutes)) * 60)
+            return String(format: "%d'%02d\"", minutes, seconds)
+        }
     }
 }
-
+struct SportAveragesTableView: View {
+    let seances: [Seance]
+    
+    // État pour le filtre du graphique
+    @State private var selectedSportGraph = "Course"
+    let sportsDisponibles = ["Course", "Vélo", "Natation", "Autre"]
+    
+    // MARK: - Logique Données Graphique
+    
+    private var graphData: [Seance] {
+        seances.filter { seance in
+            if selectedSportGraph == "Autre" {
+                // Tout ce qui n'est pas les 3 sports principaux
+                return !["Course", "Vélo", "Natation", "Run", "Ride", "Swim"].contains(seance.sport)
+            }
+            // Filtre par sport (avec compatibilité des noms anglais Strava si besoin)
+            return seance.sport == selectedSportGraph ||
+                   (selectedSportGraph == "Vélo" && seance.sport == "Ride") ||
+                   (selectedSportGraph == "Course" && seance.sport == "Run") ||
+                   (selectedSportGraph == "Natation" && seance.sport == "Swim")
+        }.sorted { $0.date < $1.date }
+    }
+    
+    // Fonction pour obtenir la valeur Y (Distance ou Durée) selon le sport
+    private func getValue(for seance: Seance) -> Double {
+        switch selectedSportGraph {
+        case "Natation":
+            // Distance en Mètres
+            return (seance.distanceKm ?? 0) * 1000
+        case "Course", "Vélo":
+            // Distance en Km
+            return seance.distanceKm ?? 0
+        default:
+            // Durée en Minutes pour le reste
+            return Double(seance.dureeMinutes)
+        }
+    }
+    
+    private var yAxisLabel: String {
+        switch selectedSportGraph {
+        case "Natation": return "Distance (m)"
+        case "Course", "Vélo": return "Distance (km)"
+        default: return "Durée (min)"
+        }
+    }
+    
+    // MARK: - Calculs Moyennes (Ton code existant)
+    
+    // Séances de course avec distance
+    private var courseSeances: [Seance] {
+        seances.filter { $0.sport == "Course" && $0.distanceKm != nil && $0.distanceKm! > 0 }
+    }
+    
+    // Séances de natation
+    private var natationSeances: [Seance] {
+        seances.filter { $0.sport == "Natation" }
+    }
+    
+    // Moyennes Course
+    private var courseStats: (distanceAvg: Double, vitesseAvg: Double, count: Int) {
+        guard !courseSeances.isEmpty else { return (0, 0, 0) }
+        
+        let totalDistance = courseSeances.compactMap { $0.distanceKm }.reduce(0, +)
+        let avgDistance = totalDistance / Double(courseSeances.count)
+        
+        var totalVitesse: Double = 0
+        var vitesseCount = 0
+        
+        for seance in courseSeances {
+            if let distance = seance.distanceKm, seance.dureeMinutes > 0 {
+                let heures = Double(seance.dureeMinutes) / 60.0
+                let vitesse = distance / heures
+                totalVitesse += vitesse
+                vitesseCount += 1
+            }
+        }
+        
+        let avgVitesse = vitesseCount > 0 ? totalVitesse / Double(vitesseCount) : 0
+        
+        return (avgDistance, avgVitesse, courseSeances.count)
+    }
+    
+    // Moyennes Natation
+    private var natationStats: (distanceAvgMetres: Double, tempsAvgMin: Int, count: Int) {
+        guard !natationSeances.isEmpty else { return (0, 0, 0) }
+        
+        let totalDistanceMetres = natationSeances.compactMap { $0.distanceKm }.reduce(0, +) * 1000
+        let avgDistanceMetres = totalDistanceMetres / Double(natationSeances.count)
+        
+        let totalMinutes = natationSeances.reduce(0) { $0 + $1.dureeMinutes }
+        let avgMinutes = totalMinutes / natationSeances.count
+        
+        return (avgDistanceMetres, avgMinutes, natationSeances.count)
+    }
+    
+    // MARK: - Body
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            
+            // 1. Titre et Picker
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Progression & Moyennes")
+                    .font(.headline)
+                
+                Picker("Sport", selection: $selectedSportGraph) {
+                    ForEach(sportsDisponibles, id: \.self) { sport in
+                        Text(sport).tag(sport)
+                    }
+                }
+                .pickerStyle(.segmented)
+            }
+            .padding(.horizontal)
+            
+            // 2. Graphique (Line + Points)
+            if !graphData.isEmpty {
+                Chart(graphData) { seance in
+                    // Ligne
+                    LineMark(
+                        x: .value("Date", seance.date),
+                        y: .value("Valeur", getValue(for: seance))
+                    )
+                    .foregroundStyle(sportColor(selectedSportGraph))
+                    .interpolationMethod(.catmullRom) // Courbe lissée
+                    
+                    // Points
+                    PointMark(
+                        x: .value("Date", seance.date),
+                        y: .value("Valeur", getValue(for: seance))
+                    )
+                    .foregroundStyle(sportColor(selectedSportGraph))
+                }
+                .chartYAxisLabel(yAxisLabel)
+                .chartXAxis {
+                    AxisMarks(format: .dateTime.day().month())
+                }
+                .frame(height: 220)
+                .padding(.horizontal)
+            } else {
+                ContentUnavailableView {
+                    Label("Pas de données", systemImage: "chart.xyaxis.line")
+                } description: {
+                    Text("Aucune séance de \(selectedSportGraph.lowercased()) sur cette période.")
+                }
+                .frame(height: 220)
+            }
+            
+            Divider().padding(.horizontal)
+            
+            // 3. Tableaux des Moyennes (Ton code original)
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Moyennes globales")
+                    .font(.headline)
+                    .padding(.horizontal)
+                
+                // Tableau Course
+                VStack(spacing: 0) {
+                    HStack {
+                        Image(systemName: "figure.run")
+                            .foregroundStyle(.blue)
+                        Text("Course")
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                        Spacer()
+                        Text("\(courseStats.count) séances")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(Color.blue.opacity(0.1))
+                    
+                    Divider()
+                    
+                    if courseStats.count > 0 {
+                        statRow(label: "Distance moyenne", value: String(format: "%.1f km", courseStats.distanceAvg))
+                        Divider()
+                        statRow(label: "Vitesse moyenne", value: String(format: "%.1f km/h", courseStats.vitesseAvg))
+                        Divider()
+                        statRow(label: "Allure moyenne", value: formatPace(kmPerHour: courseStats.vitesseAvg))
+                    } else {
+                        Text("Pas de données course")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .padding()
+                    }
+                }
+                .background(Color(.systemBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.gray.opacity(0.2), lineWidth: 1)
+                )
+                .padding(.horizontal)
+                
+                // Tableau Natation
+                VStack(spacing: 0) {
+                    HStack {
+                        Image(systemName: "figure.pool.swim")
+                            .foregroundStyle(.cyan)
+                        Text("Natation")
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                        Spacer()
+                        Text("\(natationStats.count) séances")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(Color.cyan.opacity(0.1))
+                    
+                    Divider()
+                    
+                    if natationStats.count > 0 {
+                        statRow(label: "Distance moyenne", value: String(format: "%.0f m", natationStats.distanceAvgMetres))
+                        Divider()
+                        statRow(label: "Durée moyenne", value: formatDuration(natationStats.tempsAvgMin))
+                        Divider()
+                        statRow(label: "Allure /100m", value: formatSwimPace(metres: natationStats.distanceAvgMetres, minutes: natationStats.tempsAvgMin))
+                    } else {
+                        Text("Pas de données natation")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .padding()
+                    }
+                }
+                .background(Color(.systemBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.gray.opacity(0.2), lineWidth: 1)
+                )
+                .padding(.horizontal)
+            }
+        }
+        .padding(.vertical)
+        .background(Color.gray.opacity(0.1))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+    
+    // MARK: - Helpers
+    
+    private func statRow(label: String, value: String) -> some View {
+        HStack {
+            Text(label).font(.subheadline)
+            Spacer()
+            Text(value).font(.subheadline).fontWeight(.medium)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+    }
+    
+    private func sportColor(_ sport: String) -> Color {
+        switch sport {
+        case "Course": return .blue
+        case "Vélo": return .green
+        case "Natation": return .cyan
+        default: return .orange
+        }
+    }
+    
+    // Formatters existants
+    private func formatPace(kmPerHour: Double) -> String {
+        guard kmPerHour > 0 else { return "--'--" }
+        let minPerKm = 60.0 / kmPerHour
+        let minutes = Int(minPerKm)
+        let seconds = Int((minPerKm - Double(minutes)) * 60)
+        return String(format: "%d'%02d /km", minutes, seconds)
+    }
+    
+    private func formatSwimPace(metres: Double, minutes: Int) -> String {
+        guard metres > 0 && minutes > 0 else { return "--:--" }
+        let totalSeconds = Double(minutes * 60)
+        let secondsPer100m = (totalSeconds / metres) * 100
+        let mins = Int(secondsPer100m) / 60
+        let secs = Int(secondsPer100m) % 60
+        return String(format: "%d:%02d /100m", mins, secs)
+    }
+    
+    private func formatDuration(_ minutes: Int) -> String {
+        let hours = minutes / 60
+        let mins = minutes % 60
+        if hours > 0 {
+            return "\(hours)h\(String(format: "%02d", mins))"
+        }
+        return "\(mins) min"
+    }
+}
 struct SportDistributionView: View {
     let seances: [Seance]
     
