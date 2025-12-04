@@ -9,12 +9,12 @@ struct PlanningView: View {
     @State private var showingAddSeance = false
     @State private var selectedSeance: Seance?
     
-    // Dates des 3 prochaines semaines
+    // Dates des 4 prochaines semaines (étendu pour voir plus loin)
     private var weeks: [(String, Date, Date)] {
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: Date())
         
-        return (0..<3).map { weekOffset in
+        return (0..<4).map { weekOffset in
             let weekStart = calendar.date(byAdding: .weekOfYear, value: weekOffset, to: today)!
             let actualStart = calendar.date(from: calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: weekStart))!
             let weekEnd = calendar.date(byAdding: .day, value: 6, to: actualStart)!
@@ -23,9 +23,12 @@ struct PlanningView: View {
             formatter.locale = Locale(identifier: "fr_FR")
             formatter.dateFormat = "d MMM"
             
-            let label = weekOffset == 0 ? "Cette semaine" :
-                        weekOffset == 1 ? "Semaine prochaine" :
-                        "Dans 2 semaines"
+            let label: String
+            switch weekOffset {
+            case 0: label = "Cette semaine"
+            case 1: label = "Semaine prochaine"
+            default: label = "S+\(weekOffset)"
+            }
             
             return (label, actualStart, weekEnd)
         }
@@ -36,8 +39,12 @@ struct PlanningView: View {
         guard selectedWeek < weeks.count else { return [] }
         let (_, start, end) = weeks[selectedWeek]
         
+        // Inclure la fin de journée du dernier jour
+        let calendar = Calendar.current
+        let endOfDay = calendar.date(bySettingHour: 23, minute: 59, second: 59, of: end) ?? end
+        
         return seances.filter { seance in
-            seance.date >= start && seance.date <= end
+            seance.date >= start && seance.date <= endOfDay
         }
     }
     
@@ -57,17 +64,43 @@ struct PlanningView: View {
         }
     }
     
+    // Stats de la semaine
+    private var statsSemanine: (total: Int, effectuees: Int, duree: Int) {
+        let total = seancesSemaine.count
+        let effectuees = seancesSemaine.filter { $0.statut == .effectue }.count
+        let duree = seancesSemaine.reduce(0) { $0 + $1.dureeMinutes }
+        return (total, effectuees, duree)
+    }
+    
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
                 // MARK: - Sélecteur de semaine
                 Picker("Semaine", selection: $selectedWeek) {
-                    ForEach(0..<3) { index in
+                    ForEach(0..<4) { index in
                         Text(weeks[index].0).tag(index)
                     }
                 }
                 .pickerStyle(.segmented)
-                .padding()
+                .padding(.horizontal)
+                .padding(.top)
+                
+                // MARK: - Stats rapides
+                if !seancesSemaine.isEmpty {
+                    HStack(spacing: 20) {
+                        StatBadge(
+                            value: "\(statsSemanine.effectuees)/\(statsSemanine.total)",
+                            label: "séances",
+                            color: .blue
+                        )
+                        StatBadge(
+                            value: formatDuree(statsSemanine.duree),
+                            label: "total",
+                            color: .orange
+                        )
+                    }
+                    .padding(.vertical, 8)
+                }
                 
                 // MARK: - Liste des séances
                 if seancesParJour.isEmpty {
@@ -81,6 +114,7 @@ struct PlanningView: View {
                         }
                         .buttonStyle(.borderedProminent)
                     }
+                    .frame(maxHeight: .infinity)
                 } else {
                     List {
                         ForEach(seancesParJour, id: \.0) { jour, seancesDuJour in
@@ -152,6 +186,38 @@ struct PlanningView: View {
             }
         }
     }
+    
+    private func formatDuree(_ minutes: Int) -> String {
+        if minutes >= 60 {
+            let h = minutes / 60
+            let m = minutes % 60
+            return m > 0 ? "\(h)h\(m)" : "\(h)h"
+        }
+        return "\(minutes)min"
+    }
+}
+
+// MARK: - Stat Badge
+
+struct StatBadge: View {
+    let value: String
+    let label: String
+    let color: Color
+    
+    var body: some View {
+        VStack(spacing: 2) {
+            Text(value)
+                .font(.headline)
+                .foregroundStyle(color)
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(color.opacity(0.1))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
 }
 
 // MARK: - Seance Card
@@ -161,16 +227,40 @@ struct SeanceCard: View {
     
     var body: some View {
         HStack(spacing: 12) {
-            // Indicateur de type
-            VStack {
+            // Indicateur de type avec statut
+            VStack(spacing: 4) {
                 Text(seance.type.emoji)
                     .font(.title2)
                 
-                if seance.statut == .effectue {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
-                        .font(.caption)
+                // Indicateur de statut
+                Group {
+                    switch seance.statut {
+                    case .effectue:
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                    case .annule:
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.red)
+                    case .reporte:
+                        Image(systemName: "arrow.uturn.right.circle.fill")
+                            .foregroundStyle(.orange)
+                    case .planifie:
+                        // Badge IA si généré par l'IA
+                        if seance.planId != nil {
+                            Text("IA")
+                                .font(.system(size: 8, weight: .bold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 2)
+                                .background(Color.purple)
+                                .clipShape(RoundedRectangle(cornerRadius: 4))
+                        } else {
+                            Image(systemName: "circle")
+                                .foregroundStyle(.gray.opacity(0.3))
+                        }
+                    }
                 }
+                .font(.caption)
             }
             .frame(width: 40)
             
@@ -179,6 +269,7 @@ struct SeanceCard: View {
                 HStack {
                     Text(seance.type.rawValue)
                         .font(.headline)
+                        .foregroundStyle(seance.statut == .annule ? .secondary : .primary)
                     
                     Spacer()
                     
@@ -198,6 +289,13 @@ struct SeanceCard: View {
                         .foregroundStyle(.secondary)
                     
                     Spacer()
+                    
+                    // Afficher distance si effectuée
+                    if seance.statut == .effectue, let distance = seance.distanceKm, distance > 0 {
+                        Text(String(format: "%.1f km", distance))
+                            .font(.caption)
+                            .foregroundStyle(.blue)
+                    }
                     
                     Text(seance.heureFormatee)
                         .font(.caption)
@@ -304,6 +402,7 @@ struct AddSeanceView: View {
 struct SeanceDetailView: View {
     @Bindable var seance: Seance
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
     
     var body: some View {
         NavigationStack {
@@ -314,8 +413,21 @@ struct SeanceDetailView: View {
                             .font(.largeTitle)
                         
                         VStack(alignment: .leading) {
-                            Text(seance.type.rawValue)
-                                .font(.headline)
+                            HStack {
+                                Text(seance.type.rawValue)
+                                    .font(.headline)
+                                
+                                // Badge IA
+                                if seance.planId != nil {
+                                    Text("Généré par IA")
+                                        .font(.caption2)
+                                        .foregroundStyle(.white)
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(Color.purple)
+                                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                                }
+                            }
                             Text(seance.dateFormatee)
                                 .foregroundStyle(.secondary)
                         }
@@ -326,7 +438,13 @@ struct SeanceDetailView: View {
                     LabeledContent("Sport", value: seance.sport)
                     LabeledContent("Durée", value: seance.dureeFormatee)
                     LabeledContent("Intensité", value: seance.intensite.rawValue)
-                    LabeledContent("Statut", value: "\(seance.statut.emoji) \(seance.statut.rawValue)")
+                    
+                    // Picker pour le statut
+                    Picker("Statut", selection: $seance.statut) {
+                        ForEach([StatutSeance.planifie, .effectue, .annule, .reporte], id: \.self) { statut in
+                            Text("\(statut.emoji) \(statut.rawValue)").tag(statut)
+                        }
+                    }
                 }
                 
                 Section("Description") {
@@ -338,6 +456,22 @@ struct SeanceDetailView: View {
                 }
                 
                 Section("Après la séance") {
+                    // Distance
+                    HStack {
+                        Text("Distance")
+                        Spacer()
+                        TextField("km", value: Binding(
+                            get: { seance.distanceKm ?? 0 },
+                            set: { seance.distanceKm = $0 > 0 ? $0 : nil }
+                        ), format: .number)
+                        .keyboardType(.decimalPad)
+                        .multilineTextAlignment(.trailing)
+                        .frame(width: 80)
+                        Text("km")
+                            .foregroundStyle(.secondary)
+                    }
+                    
+                    // Ressenti
                     Picker("Ressenti", selection: Binding(
                         get: { seance.ressenti ?? 5 },
                         set: { seance.ressenti = $0 }
@@ -347,6 +481,7 @@ struct SeanceDetailView: View {
                         }
                     }
                     
+                    // Commentaire
                     TextField("Commentaire", text: Binding(
                         get: { seance.commentaire ?? "" },
                         set: { seance.commentaire = $0.isEmpty ? nil : $0 }

@@ -23,13 +23,17 @@ class Seance {
     // Lien Strava (si synchronisé)
     var stravaActivityId: String?
     
+    // Identifiant du plan (pour le versioning)
+    var planId: String?
+    
     init(
         date: Date,
         type: TypeSeance,
         sport: String = "Course",
         dureeMinutes: Int,
         description: String,
-        intensite: Intensite = .modere
+        intensite: Intensite = .modere,
+        planId: String? = nil
     ) {
         self.id = UUID()
         self.date = date
@@ -39,6 +43,7 @@ class Seance {
         self.description_ = description
         self.intensite = intensite
         self.statut = .planifie
+        self.planId = planId
     }
     
     // MARK: - Computed Properties
@@ -125,6 +130,28 @@ enum TypeSeance: String, Codable, CaseIterable {
         case .test: return "gray"
         }
     }
+    
+    // ✅ Fonction ajoutée pour convertir le texte de l'IA en Enum
+    static func from(string: String) -> TypeSeance {
+        let normalized = string.lowercased()
+            .replacingOccurrences(of: "é", with: "e")
+            .replacingOccurrences(of: "è", with: "e")
+        
+        switch normalized {
+        case "endurance": return .endurance
+        case "seuil": return .seuil
+        case "vma": return .vma
+        case "intervalles", "intervalle", "fractionne": return .intervalles
+        case "sortie longue", "sortie_longue", "long run": return .sortie_longue
+        case "recuperation", "recup": return .recuperation
+        case "renforcement", "musculation", "ppg": return .renforcement
+        case "etirements", "stretching": return .etirements
+        case "repos", "rest": return .repos
+        case "competition", "course", "race": return .competition
+        case "test": return .test
+        default: return .endurance
+        }
+    }
 }
 
 enum Intensite: String, Codable, CaseIterable {
@@ -139,6 +166,21 @@ enum Intensite: String, Codable, CaseIterable {
         case .modere: return 2
         case .intense: return 3
         case .maximal: return 4
+        }
+    }
+    
+    // ✅ Fonction ajoutée pour convertir le texte de l'IA en Enum
+    static func from(string: String) -> Intensite {
+        let normalized = string.lowercased()
+            .replacingOccurrences(of: "é", with: "e")
+            .replacingOccurrences(of: "è", with: "e")
+        
+        switch normalized {
+        case "leger", "light", "facile": return .leger
+        case "modere", "moderate", "moyen": return .modere
+        case "intense", "hard", "difficile": return .intense
+        case "maximal", "max", "maximum": return .maximal
+        default: return .modere
         }
     }
 }
@@ -156,5 +198,39 @@ enum StatutSeance: String, Codable {
         case .annule: return "❌"
         case .reporte: return "↩️"
         }
+    }
+}
+
+// MARK: - Seance From IA
+
+struct SeanceFromIA: Codable {
+    let date: String
+    let type: String
+    let sport: String
+    let dureeMinutes: Int
+    let description: String
+    let intensite: String
+
+    func toSeance(planId: String?) -> Seance? {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        // Astuce pour éviter les soucis de fuseau horaire
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        
+        guard let dateParsed = formatter.date(from: date) else { return nil }
+        
+        // On met la séance à 9h par défaut
+        let dateFinale = Calendar.current.date(bySettingHour: 9, minute: 0, second: 0, of: dateParsed) ?? dateParsed
+        
+        // ✅ CORRECTION ICI : On utilise les fonctions .from(string:) qu'on vient d'ajouter
+        return Seance(
+            date: dateFinale,
+            type: TypeSeance.from(string: type),       // Conversion String -> Enum
+            sport: sport,
+            dureeMinutes: dureeMinutes,
+            description: description,
+            intensite: Intensite.from(string: intensite), // Conversion String -> Enum
+            planId: planId
+        )
     }
 }
