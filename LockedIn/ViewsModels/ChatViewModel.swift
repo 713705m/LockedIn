@@ -11,7 +11,6 @@ class ChatViewModel {
     
     // Fonction utilitaire pour formater les dernières séances avec plus de détails
     private func getRecentActivity(from seances: [Seance]) -> [[String: Any]] {
-        // Filtrer : effectuées, triées par date (récent en premier), prendre les 5 premières
         let completed = seances
             .filter { $0.statut == .effectue }
             .sorted { $0.date > $1.date }
@@ -27,18 +26,15 @@ class ChatViewModel {
                 "commentaire": seance.commentaire ?? ""
             ]
             
-            // Ajouter distance si disponible
             if let distance = seance.distanceKm, distance > 0 {
                 data["distance"] = distance
             }
             
-            // Calculer vitesse moyenne si on a distance et durée
             if let distance = seance.distanceKm, distance > 0, seance.dureeMinutes > 0 {
                 let vitesse = distance / (Double(seance.dureeMinutes) / 60.0)
-                data["vitesse"] = round(vitesse * 10) / 10 // Arrondi à 1 décimale
+                data["vitesse"] = round(vitesse * 10) / 10
             }
             
-            // Ajouter FC moyenne si disponible
             if let fc = seance.fcMoyenne {
                 data["fcMoyenne"] = fc
             }
@@ -47,7 +43,14 @@ class ChatViewModel {
         }
     }
     
-    func sendMessage(_ text: String, history: [ChatMessage], athlete: Athlete?, allSeances: [Seance]) async throws -> (String, [SeanceFromIA]) {
+    func sendMessage(
+        _ text: String,
+        history: [ChatMessage],
+        athlete: Athlete?,
+        allSeances: [Seance],
+        wizardData: WizardData? = nil,
+        isAdjustmentMode: Bool = false
+    ) async throws -> (String, [SeanceFromIA]) {
         isLoading = true
         defer { isLoading = false }
         
@@ -59,7 +62,7 @@ class ChatViewModel {
         }
         apiMessages.append(["role": "user", "content": text])
         
-        // 2. Préparer les données de l'athlète
+        // 2. Préparer les données de l'athlète (enrichies avec wizardData si présent)
         var athleteData: [String: Any]? = nil
         if let athlete = athlete {
             var data: [String: Any] = [
@@ -91,16 +94,91 @@ class ChatViewModel {
             athleteData = data
         }
         
-        // 3. Préparer l'activité récente (5 dernières séances effectuées)
+        // 3. Préparer l'activité récente
         let recentActivityData = getRecentActivity(from: allSeances)
         
-        // 4. Construire la requête
+        // 3b. Préparer les séances planifiées (pour le mode ajustement)
+        var plannedSeancesData: [[String: Any]] = []
+        if isAdjustmentMode {
+            let planned = allSeances
+                .filter { $0.source == .ia && $0.statut == .planifie && $0.date >= Date() }
+                .sorted { $0.date < $1.date }
+            
+            plannedSeancesData = planned.map { seance in
+                let formatter = DateFormatter()
+                formatter.dateFormat = "yyyy-MM-dd"
+                
+                return [
+                    "date": formatter.string(from: seance.date),
+                    "type": seance.type.rawValue,
+                    "sport": seance.sport,
+                    "dureeMinutes": seance.dureeMinutes,
+                    "description": seance.description_,
+                    "intensite": seance.intensite.rawValue
+                ] as [String: Any]
+            }
+        }
+        
+        // 4. Préparer les données du wizard (contexte enrichi pour la génération)
+        var wizardContext: [String: Any]? = nil
+        if let wizard = wizardData {
+            var ctx: [String: Any] = [
+                "dateDebut": wizard.dateDebut.ISO8601Format()
+            ]
+            
+            // Objectif (si modifié)
+            if !wizard.garderObjectif {
+                ctx["nouveauTypeObjectif"] = wizard.typeObjectif
+                ctx["nouvelleDateObjectif"] = wizard.dateObjectif.ISO8601Format()
+            }
+            
+            // Allures (si modifiées)
+            if !wizard.garderAllures {
+                if !wizard.allureEndurance.isEmpty {
+                    ctx["allureEndurance"] = wizard.allureEndurance
+                }
+                if !wizard.allureSeuil.isEmpty {
+                    ctx["allureSeuil"] = wizard.allureSeuil
+                }
+                if !wizard.vma.isEmpty {
+                    ctx["vma"] = wizard.vma
+                }
+            }
+            
+            // Précisions
+            if !wizard.precisions.isEmpty {
+                ctx["precisions"] = wizard.precisions
+            }
+            
+            // Mode d'estimation des allures
+            if let mode = wizard.estimationMode {
+                ctx["estimationMode"] = mode
+                ctx["niveauEstime"] = wizard.niveauEstime
+                
+                if mode == "temps" {
+                    ctx["distanceReference"] = wizard.distanceReference
+                    let temps = "\(wizard.tempsHeures)h\(wizard.tempsMinutes)m\(wizard.tempsSecondes)s"
+                    ctx["tempsReference"] = temps
+                }
+            }
+            
+            wizardContext = ctx
+        }
+        
+        // 5. Construire la requête
         var requestBody: [String: Any] = [
             "messages": apiMessages,
-            "recentActivity": recentActivityData
+            "recentActivity": recentActivityData,
+            "isAdjustmentMode": isAdjustmentMode
         ]
         if let athleteData = athleteData {
             requestBody["athlete"] = athleteData
+        }
+        if let wizardContext = wizardContext {
+            requestBody["wizardContext"] = wizardContext
+        }
+        if !plannedSeancesData.isEmpty {
+            requestBody["plannedSeances"] = plannedSeancesData
         }
         
         // Configuration de la requête
@@ -119,7 +197,6 @@ class ChatViewModel {
         }
         
         if httpResponse.statusCode != 200 {
-            // Essayer de parser le message d'erreur
             if let errorJson = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                let errorMessage = errorJson["error"] as? String {
                 throw APIError.serverError(errorMessage)
@@ -127,13 +204,13 @@ class ChatViewModel {
             throw APIError.serverError("Code: \(httpResponse.statusCode)")
         }
         
-        // 5. Parsing de la réponse
+        // 6. Parsing de la réponse
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let messageContent = json["message"] as? String else {
             throw APIError.parsingError
         }
         
-        // Récupération des séances (optionnel) - utilise SeanceFromIA défini dans Seance.swift
+        // Récupération des séances (optionnel)
         var parsedSeances: [SeanceFromIA] = []
         if let seancesArray = json["seances"] as? [[String: Any]] {
             let jsonData = try JSONSerialization.data(withJSONObject: seancesArray)
